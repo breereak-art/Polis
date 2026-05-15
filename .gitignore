@@ -50,9 +50,6 @@ X_THREAD.md
 # Lockfiles (regenerated on install)
 package-lock.json
 
-# External repos
-pixel-agents-repo/
-
 # Docusaurus build
 docs/.docusaurus/
 docs/build/
