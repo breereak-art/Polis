@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+
+- **Layout watcher race condition** — Replaced boolean `skipNextChange` flag with exact mtime matching in the cross-window layout file watcher, preventing legitimate external changes from being incorrectly skipped when multiple VS Code windows write in quick succession.
+
 ## v1.3.0
 
 ### Features
