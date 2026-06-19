@@ -1,5 +1,4 @@
-import sqlite3 from 'sqlite3';
-import { open, Database } from 'sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { MemoryEntry } from '@agent-office/core';
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -11,26 +10,27 @@ function cosineSimilarity(a: number[], b: number[]): number {
     return dot / (Math.sqrt(magA) * Math.sqrt(magB) || 1);
 }
 
+/**
+ * SQLite-backed memory store using Node's built-in `node:sqlite` (DatabaseSync).
+ * No native build step required — works on Windows dev and Linux deploy alike.
+ * Methods stay async to preserve the original interface; the driver is synchronous.
+ */
 export class MemoryStore {
-    private db?: Database;
-    private ollamaUrl: string;
+    private db?: DatabaseSync;
+    private embeddingUrl: string;
 
-    constructor(ollamaUrl: string = 'http://localhost:11434') {
-        this.ollamaUrl = ollamaUrl;
+    constructor(embeddingUrl: string = process.env.OLLAMA_EMBED_URL || 'http://localhost:11434') {
+        this.embeddingUrl = embeddingUrl;
     }
 
     async initialize(dbPath: string = './data/office-memory.db') {
-        // Ensure data directory exists
         const { mkdir } = await import('fs/promises');
         const path = await import('path');
         await mkdir(path.dirname(dbPath), { recursive: true });
 
-        this.db = await open({
-            filename: dbPath,
-            driver: sqlite3.Database
-        });
+        this.db = new DatabaseSync(dbPath);
 
-        await this.db.exec(`
+        this.db.exec(`
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 agent_id TEXT NOT NULL,
@@ -62,21 +62,21 @@ export class MemoryStore {
             );
         `);
 
-        // Migration: add embedding column to existing databases
+        // Migration: add embedding column to pre-existing databases.
         try {
-            await this.db.exec('ALTER TABLE memories ADD COLUMN embedding TEXT');
+            this.db.exec('ALTER TABLE memories ADD COLUMN embedding TEXT');
         } catch {
-            // Column already exists — ignore
+            // Column already exists — ignore.
         }
 
-        console.log('[MemoryStore] SQLite initialized at', dbPath);
+        console.log('[MemoryStore] node:sqlite initialized at', dbPath);
     }
 
-    // --- Embedding Generation ---
+    // --- Embedding Generation (optional; degrades to null when unavailable) ---
 
     private async generateEmbedding(text: string): Promise<number[] | null> {
         try {
-            const res = await fetch(`${this.ollamaUrl}/api/embeddings`, {
+            const res = await fetch(`${this.embeddingUrl}/api/embeddings`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model: 'llama3.2:latest', prompt: text })
@@ -92,16 +92,14 @@ export class MemoryStore {
 
     async saveMemory(agentId: string, entry: MemoryEntry, sessionId?: string): Promise<void> {
         if (!this.db) return;
-        // Generate embedding for semantic search (async, non-blocking)
         let embeddingStr: string | null = null;
         if (entry.importance >= 0.5) {
             const embedding = await this.generateEmbedding(entry.content);
             if (embedding) embeddingStr = JSON.stringify(embedding);
         }
-        await this.db.run(
-            'INSERT INTO memories (agent_id, content, type, timestamp, importance, embedding, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [agentId, entry.content, entry.type, entry.timestamp, entry.importance, embeddingStr, sessionId || null]
-        );
+        this.db.prepare(
+            'INSERT INTO memories (agent_id, content, type, timestamp, importance, embedding, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).run(agentId, entry.content, entry.type, entry.timestamp, entry.importance, embeddingStr, sessionId ?? null);
     }
 
     async saveMemories(agentId: string, entries: MemoryEntry[], sessionId?: string): Promise<void> {
@@ -112,11 +110,10 @@ export class MemoryStore {
 
     async loadMemories(agentId: string, limit: number = 20): Promise<MemoryEntry[]> {
         if (!this.db) return [];
-        const rows = await this.db.all(
-            'SELECT content, type, timestamp, importance FROM memories WHERE agent_id = ? ORDER BY importance DESC, created_at DESC LIMIT ?',
-            [agentId, limit]
-        );
-        return rows.map((r: any) => ({
+        const rows = this.db.prepare(
+            'SELECT content, type, timestamp, importance FROM memories WHERE agent_id = ? ORDER BY importance DESC, created_at DESC LIMIT ?'
+        ).all(agentId, limit) as any[];
+        return rows.map((r) => ({
             content: r.content,
             type: r.type,
             timestamp: r.timestamp,
@@ -129,18 +126,17 @@ export class MemoryStore {
         const queryEmbedding = await this.generateEmbedding(query);
         if (!queryEmbedding) return this.loadMemories(agentId, topK); // Fallback to recency
 
-        const rows = await this.db.all(
-            'SELECT content, type, timestamp, importance, embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL',
-            [agentId]
-        );
+        const rows = this.db.prepare(
+            'SELECT content, type, timestamp, importance, embedding FROM memories WHERE agent_id = ? AND embedding IS NOT NULL'
+        ).all(agentId) as any[];
 
-        const scored = rows.map((r: any) => {
+        const scored = rows.map((r) => {
             const emb = JSON.parse(r.embedding);
             const score = cosineSimilarity(queryEmbedding, emb);
             return { content: r.content, type: r.type, timestamp: r.timestamp, importance: r.importance, score };
         }).sort((a, b) => b.score - a.score);
 
-        return scored.slice(0, topK).map(s => ({
+        return scored.slice(0, topK).map((s) => ({
             content: s.content,
             type: s.type,
             timestamp: s.timestamp,
@@ -152,47 +148,46 @@ export class MemoryStore {
 
     async createTask(title: string, assignedTo?: string): Promise<number> {
         if (!this.db) return -1;
-        const result = await this.db.run(
-            'INSERT INTO tasks (title, assigned_to) VALUES (?, ?)',
-            [title, assignedTo || null]
-        );
-        return result.lastID || -1;
+        const result = this.db.prepare(
+            'INSERT INTO tasks (title, assigned_to) VALUES (?, ?)'
+        ).run(title, assignedTo ?? null);
+        return Number(result.lastInsertRowid) || -1;
     }
 
     async getTasks(): Promise<any[]> {
         if (!this.db) return [];
-        return this.db.all('SELECT * FROM tasks ORDER BY created_at DESC LIMIT 50');
+        return this.db.prepare('SELECT * FROM tasks ORDER BY created_at DESC LIMIT 50').all() as any[];
     }
 
     async assignTask(taskId: number, agentId: string): Promise<void> {
         if (!this.db) return;
-        await this.db.run('UPDATE tasks SET assigned_to = ?, status = ? WHERE id = ?', [agentId, 'in_progress', taskId]);
+        this.db.prepare('UPDATE tasks SET assigned_to = ?, status = ? WHERE id = ?').run(agentId, 'in_progress', taskId);
     }
 
     async completeTask(taskId: number): Promise<void> {
         if (!this.db) return;
-        await this.db.run("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?", [taskId]);
+        this.db.prepare("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?").run(taskId);
     }
 
     // --- Layout Operations ---
 
     async saveLayout(name: string, layoutJson: string): Promise<void> {
         if (!this.db) return;
-        const existing = await this.db.get('SELECT id FROM office_layout WHERE name = ?', [name]);
+        const existing = this.db.prepare('SELECT id FROM office_layout WHERE name = ?').get(name) as any;
         if (existing) {
-            await this.db.run("UPDATE office_layout SET layout_json = ?, updated_at = datetime('now') WHERE name = ?", [layoutJson, name]);
+            this.db.prepare("UPDATE office_layout SET layout_json = ?, updated_at = datetime('now') WHERE name = ?").run(layoutJson, name);
         } else {
-            await this.db.run('INSERT INTO office_layout (name, layout_json) VALUES (?, ?)', [name, layoutJson]);
+            this.db.prepare('INSERT INTO office_layout (name, layout_json) VALUES (?, ?)').run(name, layoutJson);
         }
     }
 
     async loadLayout(name: string = 'default'): Promise<any | null> {
         if (!this.db) return null;
-        const row = await this.db.get('SELECT layout_json FROM office_layout WHERE name = ?', [name]);
+        const row = this.db.prepare('SELECT layout_json FROM office_layout WHERE name = ?').get(name) as any;
         return row ? JSON.parse(row.layout_json) : null;
     }
 
     async close(): Promise<void> {
-        if (this.db) await this.db.close();
+        if (this.db) this.db.close();
     }
 }

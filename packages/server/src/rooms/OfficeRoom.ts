@@ -1,7 +1,7 @@
 import { Room, Client } from 'colyseus';
 import { OfficeState } from '../schema/OfficeState';
 import { Agent, Office, OfficeConfig, ConversationMessage } from '@agent-office/core';
-import { OllamaAdapter } from '@agent-office/adapters';
+import { OpenAICompatibleAdapter } from '@agent-office/adapters';
 import { ToolExecutor } from '../tools/ToolExecutor';
 import { MemoryStore } from '../memory/MemoryStore';
 
@@ -30,7 +30,14 @@ export class OfficeRoom extends Room<OfficeState> {
     private demoTickCount = 0;
     private coreAgents: Map<string, Agent> = new Map();
     private thinkingLocks: Map<string, boolean> = new Map();
-    private ollamaAdapter = new OllamaAdapter('http://localhost:11434');
+    // Qwen Cloud via the OpenAI-compatible adapter (DashScope). The adapter
+    // appends "/v1/chat/completions", so the base URL ends at "/compatible-mode".
+    private readonly qwenModel = process.env.QWEN_MODEL || 'qwen-plus';
+    private inferenceAdapter = new OpenAICompatibleAdapter(
+        process.env.QWEN_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode',
+        process.env.QWEN_API_KEY || '',
+        'qwen'
+    );
     private hireCount = 0; // Counter for generating unique IDs
     private toolExecutor = new ToolExecutor();
     private memoryStore = new MemoryStore();
@@ -90,8 +97,8 @@ export class OfficeRoom extends Room<OfficeState> {
             const coreAgent = new Agent({
                 id, name, role, avatar: 'sprite.png',
                 inference: {
-                    provider: 'ollama',
-                    model: 'llama3.2:latest',
+                    provider: 'openai',
+                    model: this.qwenModel,
                     systemPrompt: `You are ${name}, a ${role} in a virtual office. Be social, do your work, and collaborate with colleagues. Keep thoughts SHORT.`,
                 },
                 personality: {
@@ -110,7 +117,7 @@ export class OfficeRoom extends Room<OfficeState> {
                 memory: { shortTermLimit: 50 }
             });
 
-            coreAgent.setInferenceAdapter(this.ollamaAdapter);
+            coreAgent.setInferenceAdapter(this.inferenceAdapter);
             await coreAgent.initialize();
 
             // Load persistent memories from previous sessions
@@ -242,6 +249,9 @@ export class OfficeRoom extends Room<OfficeState> {
                 }).then(async (decision) => {
                     agentState.action = decision.action;
 
+                    // Trace the think → act loop (Qwen-powered).
+                    console.log(`[think:${id}] action=${decision.action} target=${decision.target || '-'} thought="${(decision.thought || '').slice(0, 80)}"`);
+
                     if (decision.thought) {
                         agentState.thought = decision.thought;
                     }
@@ -339,8 +349,8 @@ export class OfficeRoom extends Room<OfficeState> {
                                 const hireAgent = new Agent({
                                     id: hireId, name: hireName, role: hireRole, avatar: 'sprite.png',
                                     inference: {
-                                        provider: 'ollama',
-                                        model: 'llama3.2:latest',
+                                        provider: 'openai',
+                                        model: this.qwenModel,
                                         systemPrompt: `You are ${hireName}, a ${hireRole} who just joined the team at a virtual office. You were hired by ${coreAgent.config.name}. Be enthusiastic, helpful, and eager to learn. Introduce yourself to your colleagues. Keep thoughts SHORT.`,
                                     },
                                     personality: {
@@ -358,7 +368,7 @@ export class OfficeRoom extends Room<OfficeState> {
                                     memory: { shortTermLimit: 50 }
                                 });
 
-                                hireAgent.setInferenceAdapter(this.ollamaAdapter);
+                                hireAgent.setInferenceAdapter(this.inferenceAdapter);
                                 await hireAgent.initialize();
                                 this.coreAgents.set(hireId, hireAgent);
                                 this.thinkingLocks.set(hireId, false);

@@ -1,3 +1,20 @@
+import path from 'path';
+
+// Load environment from a .env file (Qwen credentials, etc.) before anything
+// else reads process.env. Node >=20.12 provides process.loadEnvFile, which
+// throws if the file is missing — so we try a few likely locations.
+for (const candidate of [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(__dirname, '..', '..', '..', '.env'),
+]) {
+    try {
+        (process as unknown as { loadEnvFile: (p: string) => void }).loadEnvFile(candidate);
+        break;
+    } catch {
+        /* try next candidate */
+    }
+}
+
 import express from 'express';
 import { Server } from 'colyseus';
 import { createServer } from 'http';

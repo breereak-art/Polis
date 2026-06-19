@@ -14,8 +14,6 @@
         "@colyseus/schema": "^2.0.22",
         "colyseus": "^0.15.0",
         "express": "^4.19.2",
-        "sqlite": "^5.1.1",
-        "sqlite3": "^5.1.7",
         "@tavily/core": "^0.7.2"
     },
     "devDependencies": {
