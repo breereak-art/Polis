@@ -50,14 +50,15 @@ export class OfficeScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.spritesheet('char_0', '/assets/characters/char_0.png', {
-            frameWidth: 16,
-            frameHeight: 32
-        });
-        this.load.spritesheet('char_1', '/assets/characters/char_1.png', {
-            frameWidth: 16,
-            frameHeight: 32
-        });
+        // Load all six character spritesheets so each agent can look distinct.
+        for (let i = 0; i < 6; i++) {
+            this.load.spritesheet(`char_${i}`, `/assets/characters/char_${i}.png`, {
+                frameWidth: 16,
+                frameHeight: 32
+            });
+        }
+        // Designed room backdrop (local-only, git-ignored reference art).
+        this.load.image('office_bg', '/star-assets/office_bg.webp');
     }
 
     create() {
@@ -69,26 +70,30 @@ export class OfficeScene extends Phaser.Scene {
 
             let hasAnims = false;
 
-            // Create animations for character 0
-            if (this.textures.exists('char_0')) {
-                const anims = this.anims;
-                anims.create({ key: 'char_0-walk-down', frames: anims.generateFrameNumbers('char_0', { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_0-walk-up', frames: anims.generateFrameNumbers('char_0', { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_0-walk-right', frames: anims.generateFrameNumbers('char_0', { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
+            // Create walk animations for every available character sprite.
+            const anims = this.anims;
+            for (let i = 0; i < 6; i++) {
+                const key = `char_${i}`;
+                if (!this.textures.exists(key)) continue;
+                anims.create({ key: `${key}-walk-down`, frames: anims.generateFrameNumbers(key, { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
+                anims.create({ key: `${key}-walk-up`, frames: anims.generateFrameNumbers(key, { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
+                anims.create({ key: `${key}-walk-right`, frames: anims.generateFrameNumbers(key, { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
                 hasAnims = true;
-            }
-            // Create animations for character 1
-            if (this.textures.exists('char_1')) {
-                const anims = this.anims;
-                anims.create({ key: 'char_1-walk-down', frames: anims.generateFrameNumbers('char_1', { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_1-walk-up', frames: anims.generateFrameNumbers('char_1', { start: 7, end: 9 }), frameRate: 8, repeat: -1 });
-                anims.create({ key: 'char_1-walk-right', frames: anims.generateFrameNumbers('char_1', { start: 14, end: 16 }), frameRate: 8, repeat: -1 });
             }
 
             console.log("Animations created: ", hasAnims);
 
             const gridSize = this.gridSize;
             const g = this.add.graphics();
+
+            // Designed room backdrop drawn over the primitive floor/furniture
+            // (depth 5; agents sit at depth 10). Falls back to primitives if missing.
+            if (this.textures.exists('office_bg')) {
+                this.add.image(0, 0, 'office_bg')
+                    .setOrigin(0, 0)
+                    .setDepth(5)
+                    .setDisplaySize(gridSize, gridSize);
+            }
 
             // ═══════════════════════════════════════════
             //  FLOORING
@@ -279,9 +284,11 @@ export class OfficeScene extends Phaser.Scene {
                 this.add.text(x + 28, y - 6, label, { fontSize: '8px', color: '#a0a0c0' }).setOrigin(0.5);
             };
 
-            drawWorkstation(64, 240, '💻 Alice\'s Desk', true);
-            drawWorkstation(64, 320, '💻 Bob\'s Desk', true);
-            drawWorkstation(64, 400, '💻 Vacant', false);
+            drawWorkstation(64, 200, '🩺 Triage Bay', true);
+            drawWorkstation(64, 280, '🔬 Diagnostics Lab', true);
+            drawWorkstation(64, 360, '❤️ Cardiology', true);
+            drawWorkstation(64, 440, '💊 Pharmacy', true);
+            drawWorkstation(64, 520, '📋 Records', true);
 
             // ═══════════════════════════════════════════
             //  COFFEE & PANTRY AREA
@@ -544,10 +551,14 @@ export class OfficeScene extends Phaser.Scene {
                 state.agents.onAdd((agent: AgentState, sessionId: string) => {
                     console.log(`[Colyseus] Agent added: ${agent.name} at (${agent.x}, ${agent.y})`);
                     const container = this.add.container(agent.x * 16, agent.y * 16);
+                    container.setDepth(10); // render agents above the room backdrop (depth 5)
 
                     let sprite;
-                    let charKey = 'char_0';
-                    if (agent.name.includes('Bob')) charKey = 'char_1';
+                    // Give each medical agent a distinct character sprite.
+                    const spriteByName: Record<string, string> = {
+                        Tara: 'char_0', Dax: 'char_3', Cora: 'char_2', Phil: 'char_4', Remi: 'char_5',
+                    };
+                    let charKey = spriteByName[agent.name] || 'char_1';
 
                     if (this.textures.exists(charKey)) {
                         sprite = this.add.sprite(0, -8, charKey, 0);

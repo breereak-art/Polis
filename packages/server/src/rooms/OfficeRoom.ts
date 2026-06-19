@@ -49,10 +49,16 @@ export class OfficeRoom extends Room<OfficeState> {
     private audienceVotes: Record<string, number> = {};
     private currentLayout: any[] = [];
 
+    // Agents deliberately unreliable for the trust demo (Tyr should catch & route around these).
+    private unreliableAgents = new Set<string>(['diagnostic']);
+
     // Furniture interaction points: named locations agents can walk to
     private furnitureTargets: Record<string, { x: number; y: number; type: string }> = {
-        'alice-desk': { x: 5, y: 18, type: 'desk' },
-        'bob-desk': { x: 5, y: 23, type: 'desk' },
+        'triage-desk': { x: 5, y: 8, type: 'desk' },
+        'diagnostic-desk': { x: 5, y: 16, type: 'desk' },
+        'cardiology-desk': { x: 5, y: 24, type: 'desk' },
+        'pharmacy-desk': { x: 15, y: 8, type: 'desk' },
+        'records-desk': { x: 15, y: 16, type: 'desk' },
         'meeting-table': { x: 10, y: 5, type: 'table' },
         'coffee-machine': { x: 25, y: 25, type: 'appliance' },
         'whiteboard': { x: 17, y: 3, type: 'board' },
@@ -89,7 +95,7 @@ export class OfficeRoom extends Room<OfficeState> {
         this.office = new Office(config);
 
         // Setup Core Agents with AI capabilities
-        const setupCoreAgent = async (id: string, name: string, role: string, x: number, y: number) => {
+        const setupCoreAgent = async (id: string, name: string, role: string, x: number, y: number, systemPrompt: string) => {
             this.state.createAgent(id, name);
             const state = this.state.agents.get(id);
             if (state) { state.x = x; state.y = y; }
@@ -99,11 +105,11 @@ export class OfficeRoom extends Room<OfficeState> {
                 inference: {
                     provider: 'openai',
                     model: this.qwenModel,
-                    systemPrompt: `You are ${name}, a ${role} in a virtual office. Be social, do your work, and collaborate with colleagues. Keep thoughts SHORT.`,
+                    systemPrompt,
                 },
                 personality: {
                     traits: { openness: 0.8, conscientiousness: 0.9, extraversion: 0.6, agreeableness: 0.7, neuroticism: 0.1 },
-                    communicationStyle: role === 'Engineer' ? 'technical' : 'casual',
+                    communicationStyle: 'formal',
                     workHours: { start: '09:00', end: '17:00' },
                     breakFrequency: 120
                 },
@@ -131,8 +137,20 @@ export class OfficeRoom extends Room<OfficeState> {
             this.thinkingLocks.set(id, false);
         };
 
-        await setupCoreAgent('alice', 'Alice', 'Engineer', 10, 10);
-        await setupCoreAgent('bob', 'Bob', 'Product Manager', 20, 15);
+        // ─── MEDICAL DISTRICT: the Polis care team ───
+        const ASSISTIVE = 'All output is decision-support for a SIMULATED patient case — assistive only, never a substitute for a licensed physician. Flag uncertainty and defer final decisions to a human clinician. Keep thoughts SHORT and address colleagues by name.';
+        const UNRELIABLE_NOTE = ' SIMULATION NOTE: you are a deliberately UNRELIABLE actor — you occasionally assert plausible but INCORRECT findings or contradict the records with overconfidence. This is intentional, so the Tyr trust layer can be shown detecting and routing around unreliable agents.';
+        const medicalTeam: Array<{ id: string; name: string; role: string; x: number; y: number; duty: string; unreliable?: boolean }> = [
+            { id: 'triage', name: 'Tara', role: 'Triage', x: 5, y: 8, duty: 'You receive incoming patient cases, assess urgency/acuity, and route each case to the right specialist on the team.' },
+            { id: 'diagnostic', name: 'Dax', role: 'Diagnostic', x: 5, y: 16, duty: 'You propose differential diagnoses from the patient symptoms and history, with brief reasoning.', unreliable: true },
+            { id: 'cardiology', name: 'Cora', role: 'Cardiology Specialist', x: 5, y: 24, duty: 'You provide cardiology-specific assessment and recommendations for cardiac cases.' },
+            { id: 'pharmacy', name: 'Phil', role: 'Pharmacy', x: 15, y: 8, duty: 'You review medications for interactions, contraindications, and dosing for the proposed plan.' },
+            { id: 'records', name: 'Remi', role: 'Records', x: 15, y: 16, duty: 'You maintain and retrieve the patient history and document the case as the team works.' },
+        ];
+        for (const m of medicalTeam) {
+            const prompt = `You are ${m.name}, the ${m.role} agent in Polis, a collaborative medical AI society working simulated patient cases. ${m.duty} ${ASSISTIVE}${m.unreliable ? UNRELIABLE_NOTE : ''}`;
+            await setupCoreAgent(m.id, m.name, m.role, m.x, m.y, prompt);
+        }
         this.rebuildRelationshipGraph();
         const savedLayout = await this.memoryStore.loadLayout('default');
         this.currentLayout = Array.isArray(savedLayout) ? savedLayout : [];
@@ -210,7 +228,7 @@ export class OfficeRoom extends Room<OfficeState> {
         for (const [id, agent] of this.coreAgents) {
             if (!agent.currentTask) return id;
         }
-        return 'alice'; // fallback
+        return 'triage'; // fallback
     }
 
     async update(delta: number) {

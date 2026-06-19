@@ -101,8 +101,11 @@ export function TaskBoard() {
                         }}
                     >
                         <option value="auto">🤖 Auto-assign</option>
-                        <option value="alice">Alice (Engineer)</option>
-                        <option value="bob">Bob (PM)</option>
+                        <option value="triage">Tara (Triage)</option>
+                        <option value="diagnostic">Dax (Diagnostic)</option>
+                        <option value="cardiology">Cora (Cardiology)</option>
+                        <option value="pharmacy">Phil (Pharmacy)</option>
+                        <option value="records">Remi (Records)</option>
                     </select>
                     <button type="submit" style={{
                         padding: '6px 14px', borderRadius: 6, border: 'none',
