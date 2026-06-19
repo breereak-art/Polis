@@ -4,6 +4,7 @@ import { Agent, Office, OfficeConfig, ConversationMessage } from '@agent-office/
 import { OpenAICompatibleAdapter } from '@agent-office/adapters';
 import { ToolExecutor } from '../tools/ToolExecutor';
 import { MemoryStore } from '../memory/MemoryStore';
+import { TyrLedger } from '../tyr/TyrLedger';
 
 interface HighlightEvent {
     type: string;
@@ -52,6 +53,9 @@ export class OfficeRoom extends Room<OfficeState> {
     // Agents deliberately unreliable for the trust demo (Tyr should catch & route around these).
     private unreliableAgents = new Set<string>(['diagnostic']);
 
+    // Tyr — the hash-chained, tamper-evident trust ledger for the society.
+    private tyr = new TyrLedger();
+
     // Furniture interaction points: named locations agents can walk to
     private furnitureTargets: Record<string, { x: number; y: number; type: string }> = {
         'triage-desk': { x: 5, y: 8, type: 'desk' },
@@ -59,6 +63,7 @@ export class OfficeRoom extends Room<OfficeState> {
         'cardiology-desk': { x: 5, y: 24, type: 'desk' },
         'pharmacy-desk': { x: 15, y: 8, type: 'desk' },
         'records-desk': { x: 15, y: 16, type: 'desk' },
+        'tyr-desk': { x: 28, y: 20, type: 'desk' },
         'meeting-table': { x: 10, y: 5, type: 'table' },
         'coffee-machine': { x: 25, y: 25, type: 'appliance' },
         'whiteboard': { x: 17, y: 3, type: 'board' },
@@ -150,8 +155,22 @@ export class OfficeRoom extends Room<OfficeState> {
         for (const m of medicalTeam) {
             const prompt = `You are ${m.name}, the ${m.role} agent in Polis, a collaborative medical AI society working simulated patient cases. ${m.duty} ${ASSISTIVE}${m.unreliable ? UNRELIABLE_NOTE : ''}`;
             await setupCoreAgent(m.id, m.name, m.role, m.x, m.y, prompt);
+            // Give every agent a soulbound identity + starting bond in Tyr.
+            this.tyr.registerAgent({ agentId: m.id, name: m.name, role: m.role, capabilities: [m.role], bond: 100, now: Date.now() });
         }
+
+        // ─── TYR: trust registry has its own office; agents query it for trust ───
+        this.tyr.registerAgent({ agentId: 'tyr', name: 'Tyr', role: 'Trust Registry', capabilities: ['trust_query'], bond: 0, now: Date.now() });
+        this.state.createAgent('tyr', 'Tyr');
+        const tyrState = this.state.agents.get('tyr');
+        if (tyrState) { tyrState.x = 28; tyrState.y = 20; } // Tyr stands at its registry desk (no LLM think loop)
+
+        this.seedTrustHistory();
+        const integrity = this.tyr.verifyIntegrity();
+        console.log(`[Tyr] ledger seeded: ${integrity.length} attestations, integrity=${integrity.valid}`);
+
         this.rebuildRelationshipGraph();
+        this.broadcastTrust();
         const savedLayout = await this.memoryStore.loadLayout('default');
         this.currentLayout = Array.isArray(savedLayout) ? savedLayout : [];
 
@@ -229,6 +248,48 @@ export class OfficeRoom extends Room<OfficeState> {
             if (!agent.currentTask) return id;
         }
         return 'triage'; // fallback
+    }
+
+    // ─── TYR HELPERS ───
+
+    /** Seed a believable track record so trust tiers differ from the start. */
+    private seedTrustHistory() {
+        const base = Date.now();
+        const ids = ['triage', 'diagnostic', 'cardiology', 'pharmacy', 'records'];
+        for (let i = 0; i < 8; i++) {
+            for (const id of ids) {
+                const unreliable = this.unreliableAgents.has(id);
+                const pass = unreliable ? Math.random() < 0.3 : Math.random() < 0.92;
+                this.tyr.recordAttestation({
+                    agentId: id,
+                    taskId: `seed_case_${i}`,
+                    outcome: pass ? 'pass' : 'fail',
+                    score: pass ? 85 + Math.floor(Math.random() * 15) : 25 + Math.floor(Math.random() * 25),
+                    attester: 'triage',
+                    now: base + i * 1000,
+                });
+            }
+        }
+    }
+
+    /** Broadcast current trust profiles + chain integrity to all clients. */
+    private broadcastTrust() {
+        this.broadcast('trust-update', {
+            profiles: this.tyr.getAllProfiles(),
+            integrity: this.tyr.verifyIntegrity(),
+            chainLength: this.tyr.getChain().length,
+            time: this.state.officeTime,
+        });
+    }
+
+    /** Public snapshot for the REST API (trust profiles + ledger integrity). */
+    public getTyrSnapshot() {
+        return {
+            profiles: this.tyr.getAllProfiles(),
+            integrity: this.tyr.verifyIntegrity(),
+            chainLength: this.tyr.getChain().length,
+            slashes: this.tyr.getSlashEvents(),
+        };
     }
 
     async update(delta: number) {
@@ -777,6 +838,11 @@ export class OfficeRoom extends Room<OfficeState> {
         });
         client.send('relationship-update', this.buildRelationshipPayload());
         client.send('layout-sync', { name: 'default', layout: this.currentLayout });
+        client.send('trust-update', {
+            profiles: this.tyr.getAllProfiles(),
+            integrity: this.tyr.verifyIntegrity(),
+            chainLength: this.tyr.getChain().length,
+        });
     }
 
     onLeave(client: Client, consented: boolean) {

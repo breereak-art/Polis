@@ -40,6 +40,16 @@ app.post('/api/vote-chaos', (req, res) => {
     res.json({ ok: true, ...result });
 });
 
+// Tyr trust ledger snapshot — agent trust profiles + hash-chain integrity proof.
+app.get('/api/tyr', (req, res) => {
+    const room = OfficeRoom.getActiveRoom();
+    if (!room) {
+        res.status(503).json({ ok: false, error: 'No active office room.' });
+        return;
+    }
+    res.json({ ok: true, ...room.getTyrSnapshot() });
+});
+
 app.get('/api/episode-recap', (req, res) => {
     const room = OfficeRoom.getActiveRoom();
     if (!room) {
