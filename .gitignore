@@ -60,3 +60,9 @@ docs/build/
 # Local-only reference + non-commercial Star-Office art (do NOT commit)
 .ref/
 packages/ui/public/star-assets/
+
+# Raw Kenney CC0 download (bulky) — keep local; the composed PNG is committed instead
+tools/kenney_dl/
+
+# Unused procedural generator (kept local, not part of Polis)
+pixel-agents-repo/pixel_world_skill/

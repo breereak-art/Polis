@@ -57,8 +57,8 @@ export class OfficeScene extends Phaser.Scene {
                 frameHeight: 32
             });
         }
-        // Designed room backdrop (local-only, git-ignored reference art).
-        this.load.image('office_bg', '/star-assets/office_bg.webp');
+        // City backdrop — Kenney CC0 tiles composed into a top-down city block.
+        this.load.image('polis_city', '/assets/polis-city.png');
     }
 
     create() {
@@ -86,10 +86,10 @@ export class OfficeScene extends Phaser.Scene {
             const gridSize = this.gridSize;
             const g = this.add.graphics();
 
-            // Designed room backdrop drawn over the primitive floor/furniture
-            // (depth 5; agents sit at depth 10). Falls back to primitives if missing.
-            if (this.textures.exists('office_bg')) {
-                this.add.image(0, 0, 'office_bg')
+            // City backdrop drawn over the primitive floor/furniture (depth 5;
+            // agents sit at depth 10). Falls back to primitives if missing.
+            if (this.textures.exists('polis_city')) {
+                this.add.image(0, 0, 'polis_city')
                     .setOrigin(0, 0)
                     .setDepth(5)
                     .setDisplaySize(gridSize, gridSize);
