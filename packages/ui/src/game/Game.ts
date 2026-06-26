@@ -34,6 +34,7 @@ export class OfficeScene extends Phaser.Scene {
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private room?: Colyseus.Room;
     private agentSprites: Map<string, Phaser.GameObjects.Container> = new Map();
+    private agentBadges: Map<string, Phaser.GameObjects.Text> = new Map();
     private statusText!: Phaser.GameObjects.Text;
     private followTarget: Phaser.GameObjects.Container | null = null;
     private cinematicMode = true;
@@ -548,6 +549,51 @@ export class OfficeScene extends Phaser.Scene {
                     eventBus.dispatchEvent(new CustomEvent('layout-sync', { detail: { items: this.layoutItems } }));
                 });
 
+                // ─── TYR TRUST VISUALS ───
+                const tierColor = (t: number): string =>
+                    t >= 5 ? '#ffd700' : t >= 4 ? '#4ade80' : t >= 3 ? '#38bdf8' : t >= 2 ? '#fbbf24' : '#f87171';
+
+                // Trust badges float over each agent, color-coded by Tyr tier.
+                this.room!.onMessage('trust-update', (message: any) => {
+                    for (const p of (message?.profiles || [])) {
+                        if (p.agentId === 'tyr') continue; // the registry itself has no worker tier
+                        const badge = this.agentBadges.get(p.agentId);
+                        if (badge) {
+                            badge.setText(`T${p.trustTier}`);
+                            badge.setBackgroundColor(tierColor(p.trustTier));
+                            badge.setVisible(true);
+                        }
+                    }
+                    eventBus.dispatchEvent(new CustomEvent('trust-update', { detail: message }));
+                });
+
+                // Slash: red flash + a floating "SLASHED −N" that rises and fades.
+                this.room!.onMessage('slash', (message: any) => {
+                    const c = this.agentSprites.get(message.agentId);
+                    if (c) {
+                        const spr: any = (c.list as any[]).find((o) => typeof o.setTint === 'function');
+                        if (spr) { spr.setTint(0xff3b3b); this.time.delayedCall(1200, () => spr.clearTint()); }
+                        const ft = this.add.text(c.x, c.y - 42, `SLASHED −${message.amount}`, {
+                            fontSize: '11px', color: '#ff4d4d', backgroundColor: '#000a',
+                            padding: { x: 3, y: 1 }, fontStyle: 'bold',
+                        }).setOrigin(0.5, 1).setDepth(60);
+                        this.tweens.add({ targets: ft, y: ft.y - 26, alpha: 0, duration: 2000, onComplete: () => ft.destroy() });
+                    }
+                    eventBus.dispatchEvent(new CustomEvent('slash', { detail: message }));
+                });
+
+                // Trust gate: a brief "⛔ rerouted" marker over the bypassed agent.
+                this.room!.onMessage('trust-gate', (message: any) => {
+                    const c = this.agentSprites.get(message.rejected);
+                    if (c) {
+                        const ft = this.add.text(c.x, c.y - 42, '⛔ rerouted', {
+                            fontSize: '10px', color: '#fbbf24', backgroundColor: '#000a', padding: { x: 3, y: 1 },
+                        }).setOrigin(0.5, 1).setDepth(60);
+                        this.tweens.add({ targets: ft, y: ft.y - 22, alpha: 0, duration: 2000, onComplete: () => ft.destroy() });
+                    }
+                    eventBus.dispatchEvent(new CustomEvent('trust-gate', { detail: message }));
+                });
+
                 state.agents.onAdd((agent: AgentState, sessionId: string) => {
                     console.log(`[Colyseus] Agent added: ${agent.name} at (${agent.x}, ${agent.y})`);
                     const container = this.add.container(agent.x * 16, agent.y * 16);
@@ -595,10 +641,18 @@ export class OfficeScene extends Phaser.Scene {
                     focusRing.strokeCircle(0, 0, 14);
                     focusRing.setVisible(false);
 
-                    container.add([focusRing, sprite, thoughtBubble, emoteBubble, label]);
+                    // Tyr trust badge (tier, color-coded) — shown once trust-update arrives
+                    const trustBadge = this.add.text(0, -50, '', {
+                        fontSize: '9px', color: '#08111f', fontStyle: 'bold',
+                        backgroundColor: '#888', padding: { x: 3, y: 1 }
+                    }).setOrigin(0.5, 1);
+                    trustBadge.setVisible(false);
+
+                    container.add([focusRing, sprite, thoughtBubble, emoteBubble, label, trustBadge]);
                     container.setSize(32, 48);
                     container.setInteractive();
                     this.agentSprites.set(sessionId, container);
+                    this.agentBadges.set(sessionId, trustBadge);
 
                     // --- FOCUS MODE: Click to follow ---
                     container.on('pointerdown', () => {
@@ -701,6 +755,7 @@ export class OfficeScene extends Phaser.Scene {
                         sprite.destroy();
                         this.agentSprites.delete(sessionId);
                     }
+                    this.agentBadges.delete(sessionId);
                 });
             });
 

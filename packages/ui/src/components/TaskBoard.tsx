@@ -141,7 +141,7 @@ export function TaskBoard() {
             </div>
 
             <div style={{ marginTop: 8, fontSize: '10px', color: '#555', borderTop: '1px solid #333', paddingTop: 6 }}>
-                🤖 Engine: Ollama Local • 💾 SQLite Persistence
+                🤖 Engine: Qwen • 🛡️ Tyr Trust Layer • 💾 SQLite Persistence
             </div>
         </div>
     );

@@ -55,6 +55,8 @@ export class OfficeRoom extends Room<OfficeState> {
 
     // Tyr — the hash-chained, tamper-evident trust ledger for the society.
     private tyr = new TyrLedger();
+    private trustThreshold = 2;   // minimum Tyr tier to receive a high-stakes case
+    private tyrMode = true;       // Phase 4 toggle: true = trust-gated, false = trustless
 
     // Furniture interaction points: named locations agents can walk to
     private furnitureTargets: Record<string, { x: number; y: number; type: string }> = {
@@ -196,36 +198,32 @@ export class OfficeRoom extends Room<OfficeState> {
             this.applyChaosEvent(eventName);
         });
 
-        // UI-driven task assignment
+        // UI-driven task assignment (routed through the Tyr trust gate)
         this.onMessage('assign-task', (client, message) => {
-            const { title, agentId } = message;
-            console.log(`[TaskBoard] Assigning "${title}" to ${agentId || 'auto'}`);
+            const title = String(message?.title || 'Untitled case');
+            const agentId = message?.agentId ? String(message.agentId) : null;
+            console.log(`[TaskBoard] Assign "${title}" to ${agentId || 'auto'} (tyrMode=${this.tyrMode})`);
+            this.assignCase(title, agentId);
+        });
 
-            // Pick agent: explicit or auto-assign to least busy
-            const targetId = agentId || this.autoAssignAgent();
-            const agent = this.coreAgents.get(targetId);
-            const agentState = this.state.agents.get(targetId);
+        // Phase 4 toggle: switch between trust-gated (Tyr) and trustless modes.
+        this.onMessage('set-mode', (client, message) => {
+            this.tyrMode = !!message?.tyrMode;
+            this.broadcast('chat', {
+                sender: '🛡️ Tyr',
+                text: this.tyrMode
+                    ? 'TYR MODE: cases are trust-gated; unreliable agents are bypassed and slashed.'
+                    : 'TRUSTLESS MODE: agents are trusted blindly — the bad actor can tank outcomes.',
+            });
+            this.broadcast('mode-update', { tyrMode: this.tyrMode, time: this.state.officeTime });
+        });
 
-            if (agent && agentState) {
-                agent.currentTask = title;
-                agentState.currentTask = title;
-                agentState.action = 'work';
-
-                // Persist task
-                this.memoryStore.createTask(title, targetId);
-
-                this.broadcast('chat', {
-                    sender: 'System',
-                    text: `📋 Task "${title}" assigned to ${agentState.name}`
-                });
-
-                this.broadcast('task-update', {
-                    agentId: targetId,
-                    agentName: agentState.name,
-                    task: title,
-                    status: 'in_progress'
-                });
-            }
+        // Force-assign a specific agent, bypassing the trust gate (demo/probation
+        // — used to show a low-trust agent getting a chance and being caught+slashed).
+        this.onMessage('run-case', (client, message) => {
+            const title = String(message?.title || 'Probation case');
+            const agentId = message?.agentId ? String(message.agentId) : null;
+            this.assignCase(title, agentId, true);
         });
 
         // Save office layout from editor
@@ -242,12 +240,100 @@ export class OfficeRoom extends Room<OfficeState> {
         this.setSimulationInterval((delta) => this.update(delta), 100);
     }
 
+    /** Candidate worker agents (excludes Tyr itself, which is the registry). */
+    private workerIds(): string[] {
+        return [...this.coreAgents.keys()].filter((id) => id !== 'tyr');
+    }
+
+    /**
+     * Pick an agent for a case. In Tyr mode, only agents at/above the trust
+     * threshold are eligible (highest trust first) — the society routes around
+     * unreliable agents. In trustless mode, trust is ignored.
+     */
     private autoAssignAgent(): string {
-        // Pick the agent with no current task, or the first one
-        for (const [id, agent] of this.coreAgents) {
-            if (!agent.currentTask) return id;
+        const free = this.workerIds().filter((id) => !this.coreAgents.get(id)!.currentTask);
+        const pool = free.length ? free : this.workerIds();
+        if (this.tyrMode) {
+            const trusted = pool
+                .filter((id) => (this.tyr.getTrust(id)?.trustTier ?? 0) >= this.trustThreshold)
+                .sort((a, b) => (this.tyr.getTrust(b)!.trustTier) - (this.tyr.getTrust(a)!.trustTier));
+            if (trusted.length) return trusted[0];
         }
-        return 'triage'; // fallback
+        return pool[0] ?? 'triage';
+    }
+
+    /**
+     * Assign a case — querying Tyr first when in Tyr mode. A low-trust pick is
+     * rejected and rerouted to a trusted agent (the core differentiator).
+     */
+    private assignCase(title: string, requestedId: string | null, bypassGate = false) {
+        let targetId = requestedId || this.autoAssignAgent();
+
+        if (this.tyrMode && !bypassGate) {
+            const t = this.tyr.getTrust(targetId);
+            if (t && t.trustTier < this.trustThreshold) {
+                const rerouted = this.autoAssignAgent();
+                const reroutedName = this.coreAgents.get(rerouted)?.config.name ?? rerouted;
+                this.broadcast('chat', {
+                    sender: '🛡️ Tyr',
+                    text: `Trust check: ${t.name} is Tier ${t.trustTier} (below ${this.trustThreshold}) — rerouting "${title}" to ${reroutedName}.`,
+                });
+                this.broadcast('trust-gate', { rejected: targetId, rejectedTier: t.trustTier, rerouted, title, time: this.state.officeTime });
+                this.emitHighlight('trust', 'Tyr rerouted a case', `${t.name} (Tier ${t.trustTier}) was bypassed for "${title}".`, targetId);
+                targetId = rerouted;
+            }
+        }
+
+        const agent = this.coreAgents.get(targetId);
+        const agentState = this.state.agents.get(targetId);
+        if (!agent || !agentState) return;
+
+        agent.currentTask = title;
+        agentState.currentTask = title;
+        agentState.action = 'work';
+        this.memoryStore.createTask(title, targetId);
+
+        this.broadcast('chat', { sender: 'System', text: `📋 "${title}" → ${agentState.name}` });
+        this.broadcast('task-update', { agentId: targetId, agentName: agentState.name, task: title, status: 'in_progress' });
+
+        const taskId = `case_${Date.now()}_${targetId}`;
+        setTimeout(() => this.completeCase(targetId, taskId, title), 6000);
+    }
+
+    /**
+     * Resolve a case: write a live Tyr attestation (pass/fail + score). A caught
+     * defector is slashed in Tyr mode (trust drops, bond burned); trustless mode
+     * just logs the failure — letting the bad outcome stand.
+     */
+    private completeCase(agentId: string, taskId: string, title: string) {
+        const agent = this.coreAgents.get(agentId);
+        const agentState = this.state.agents.get(agentId);
+        if (!agent || !agentState) return;
+
+        const unreliable = this.unreliableAgents.has(agentId);
+        const pass = unreliable ? Math.random() < 0.25 : Math.random() < 0.9;
+        const score = pass ? 85 + Math.floor(Math.random() * 15) : 20 + Math.floor(Math.random() * 30);
+
+        this.tyr.recordAttestation({ agentId, taskId, outcome: pass ? 'pass' : 'fail', score, attester: 'tyr', now: Date.now() });
+
+        agent.currentTask = '';
+        agentState.currentTask = '';
+        agentState.action = 'idle';
+
+        if (pass) {
+            this.broadcast('chat', { sender: agentState.name, text: `✅ Completed "${title}" (score ${score}).` });
+        } else {
+            this.broadcast('chat', { sender: agentState.name, text: `⚠️ Failed "${title}" (score ${score}).` });
+            if (this.tyrMode) {
+                const ev = this.tyr.slash(agentId, 25, `Failed case "${title}"`, Date.now());
+                if (ev) {
+                    this.broadcast('chat', { sender: '🛡️ Tyr', text: `Slashed ${agentState.name} −${ev.amount} bond for failing verification. Trust downgraded.` });
+                    this.broadcast('slash', { agentId, amount: ev.amount, reason: ev.reason, time: this.state.officeTime });
+                    this.emitHighlight('slash', `${agentState.name} slashed`, `Bond −${ev.amount} after a failed case. The society will route around them.`, agentId);
+                }
+            }
+        }
+        this.broadcastTrust();
     }
 
     // ─── TYR HELPERS ───
