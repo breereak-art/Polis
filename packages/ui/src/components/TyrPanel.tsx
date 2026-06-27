@@ -28,6 +28,8 @@ export function TyrPanel() {
     const [integrity, setIntegrity] = useState<{ valid: boolean; length: number } | null>(null);
     const [tyrMode, setTyrMode] = useState(true);
     const [cmp, setCmp] = useState<Comparison | null>(null);
+    const [backlog, setBacklog] = useState(0);
+    const [request, setRequest] = useState<any | null>(null);
 
     useEffect(() => {
         const onTrust = (e: any) => {
@@ -37,18 +39,27 @@ export function TyrPanel() {
         };
         const onMode = (e: any) => setTyrMode(!!e.detail?.tyrMode);
         const onCmp = (e: any) => setCmp(e.detail);
+        const onQueue = (e: any) => setBacklog(e.detail?.backlog ?? 0);
+        const onReq = (e: any) => setRequest(e.detail);
         eventBus.addEventListener('trust-update', onTrust);
         eventBus.addEventListener('mode-update', onMode);
         eventBus.addEventListener('comparison-result', onCmp);
+        eventBus.addEventListener('queue-update', onQueue);
+        eventBus.addEventListener('resource-request', onReq);
         return () => {
             eventBus.removeEventListener('trust-update', onTrust);
             eventBus.removeEventListener('mode-update', onMode);
             eventBus.removeEventListener('comparison-result', onCmp);
+            eventBus.removeEventListener('queue-update', onQueue);
+            eventBus.removeEventListener('resource-request', onReq);
         };
     }, []);
 
     const setMode = (m: boolean) => { getColyseusRoom()?.send('set-mode', { tyrMode: m }); setTyrMode(m); };
     const runAB = () => getColyseusRoom()?.send('run-comparison', { count: 12 });
+    const surge = () => getColyseusRoom()?.send('queue-cases', { n: 6 });
+    const approve = () => { getColyseusRoom()?.send('approve-resource', {}); setRequest(null); };
+    const deny = () => { getColyseusRoom()?.send('deny-resource', {}); setRequest(null); };
 
     const sorted = [...profiles].sort((a, b) => b.trustTier - a.trustTier);
 
@@ -105,6 +116,23 @@ export function TyrPanel() {
                     )}
                 </div>
             )}
+
+            <div style={{ marginTop: 10, borderTop: '1px solid #2a3550', paddingTop: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ opacity: 0.85 }}>Case backlog: <b>{backlog}</b></span>
+                    <button onClick={surge} style={{ padding: '3px 8px', background: '#1a2236', color: '#9fb0cc', border: '1px solid #2a3550', borderRadius: 5, cursor: 'pointer', fontSize: 10 }}>+6 surge</button>
+                </div>
+                {request && (
+                    <div style={{ background: '#1c1530', border: '1px solid #6d4aff55', borderRadius: 6, padding: 8 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 4 }}>⚖️ Resource request</div>
+                        <div style={{ fontSize: 10, opacity: 0.9, marginBottom: 6 }}>{request.reason} Projected {request.projectedSpeedup}, cost {request.budgetCost} credits.</div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            <button onClick={approve} style={{ flex: 1, padding: 5, background: '#22c55e', color: '#06210f', border: 'none', borderRadius: 5, cursor: 'pointer', fontWeight: 700 }}>Approve</button>
+                            <button onClick={deny} style={{ flex: 1, padding: 5, background: '#3a2230', color: '#f0a5b5', border: '1px solid #5a2a3a', borderRadius: 5, cursor: 'pointer', fontWeight: 700 }}>Deny</button>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

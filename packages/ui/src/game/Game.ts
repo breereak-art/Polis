@@ -600,6 +600,12 @@ export class OfficeScene extends Phaser.Scene {
                 this.room!.onMessage('comparison-result', (message: any) => {
                     eventBus.dispatchEvent(new CustomEvent('comparison-result', { detail: message }));
                 });
+                this.room!.onMessage('queue-update', (message: any) => {
+                    eventBus.dispatchEvent(new CustomEvent('queue-update', { detail: message }));
+                });
+                this.room!.onMessage('resource-request', (message: any) => {
+                    eventBus.dispatchEvent(new CustomEvent('resource-request', { detail: message }));
+                });
 
                 state.agents.onAdd((agent: AgentState, sessionId: string) => {
                     console.log(`[Colyseus] Agent added: ${agent.name} at (${agent.x}, ${agent.y})`);

@@ -1,0 +1,10 @@
+import { Client } from "colyseus.js";
+const room = await new Client("ws://localhost:3000").joinOrCreate("office");
+console.log("joined", room.roomId);
+let approved = false;
+room.onMessage("chat", (m) => { if (/Governance|backlog|Approved|provisioned|queued|Polis/i.test(m.text)) console.log("[chat]", `${m.sender}: ${m.text}`); });
+room.onMessage("resource-request", (m) => { console.log("[RESOURCE-REQ]", JSON.stringify(m)); if (!approved) { approved = true; setTimeout(() => { console.log(">> approving"); room.send("approve-resource", {}); }, 800); } });
+room.onMessage("queue-update", (m) => console.log("[QUEUE]", `backlog=${m.backlog}/${m.threshold}`));
+room.onMessage("trust-update", (m) => { const l = (m.profiles||[]).find(p=>p.agentId.startsWith("locum")); if (l) console.log("[NEW AGENT]", `${l.name} tier=${l.trustTier} bond=${l.bond} attestations=${l.attestationCount}`); });
+setTimeout(() => { console.log(">> surge"); room.send("queue-cases", { n: 6 }); }, 1200);
+setTimeout(() => process.exit(0), 9000);

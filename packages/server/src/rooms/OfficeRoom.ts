@@ -57,6 +57,11 @@ export class OfficeRoom extends Room<OfficeState> {
     private tyr = new TyrLedger();
     private trustThreshold = 2;   // minimum Tyr tier to receive a high-stakes case
     private tyrMode = true;       // Phase 4 toggle: true = trust-gated, false = trustless
+    // Phase 5 governance/scaling
+    private caseBacklog = 0;
+    private queueThreshold = 5;
+    private pendingResourceRequest = false;
+    private govHireCount = 0;
 
     // Furniture interaction points: named locations agents can walk to
     private furnitureTargets: Record<string, { x: number; y: number; type: string }> = {
@@ -237,6 +242,23 @@ export class OfficeRoom extends Room<OfficeState> {
             });
         });
 
+        // Phase 5: queue load (a surge of patient cases) — drives the scaling loop.
+        this.onMessage('queue-cases', (client, message) => {
+            const n = Math.max(1, Math.min(20, Number(message?.n) || 6));
+            this.caseBacklog += n;
+            this.broadcast('chat', { sender: 'System', text: `📥 ${n} patient cases queued (backlog ${this.caseBacklog}).` });
+            this.broadcast('queue-update', { backlog: this.caseBacklog, threshold: this.queueThreshold, time: this.state.officeTime });
+            this.checkBacklog();
+        });
+
+        // Phase 5: human approves / denies the coordinator's resource request.
+        this.onMessage('approve-resource', () => { void this.approveResource(); });
+        this.onMessage('deny-resource', () => {
+            if (!this.pendingResourceRequest) return;
+            this.pendingResourceRequest = false;
+            this.broadcast('chat', { sender: '🏛️ Polis', text: 'Resource request denied — the society will cope with current staff.' });
+        });
+
         // Save office layout from editor
         this.onMessage('save-layout', async (client, message) => {
             const layoutName = message.name || 'default';
@@ -383,6 +405,74 @@ export class OfficeRoom extends Room<OfficeState> {
             routedAround: workers.filter((id) => !pool.includes(id)).map((id) => this.tyr.getTrust(id)?.name ?? id),
             time: this.state.officeTime,
         };
+    }
+
+    /** When the backlog exceeds capacity, the coordinator drafts a resource
+     *  request (justification + projected speedup + cost) for a human to approve. */
+    private checkBacklog() {
+        if (this.caseBacklog < this.queueThreshold || this.pendingResourceRequest) return;
+        this.pendingResourceRequest = true;
+        const trustedCount = this.workerIds().filter((id) => (this.tyr.getTrust(id)?.trustTier ?? 0) >= this.trustThreshold).length || 1;
+        const req = {
+            reason: `Backlog of ${this.caseBacklog} cases exceeds capacity — only ${trustedCount} trusted agents available.`,
+            projectedSpeedup: `~${Math.round(100 / (trustedCount + 1))}% faster clearance`,
+            budgetCost: 120,
+            backlog: this.caseBacklog,
+            time: this.state.officeTime,
+        };
+        this.broadcast('resource-request', req);
+        this.broadcast('chat', { sender: '🏛️ Polis', text: `⚖️ Governance request: provision 1 new agent. ${req.reason} Projected ${req.projectedSpeedup}, cost ${req.budgetCost} credits. Awaiting human approval.` });
+        this.emitHighlight('governance', 'Resource request raised', req.reason);
+    }
+
+    /** On human approval, spawn a new agent that ENTERS AT LOW TRUST and must
+     *  earn its way up via Tyr before it can take high-stakes cases. */
+    private async approveResource() {
+        if (!this.pendingResourceRequest) return;
+        this.pendingResourceRequest = false;
+        this.govHireCount++;
+        const id = `locum_${this.govHireCount}`;
+        const name = `Locum ${this.govHireCount}`;
+        const role = 'Locum Physician';
+
+        this.state.createAgent(id, name);
+        const st = this.state.agents.get(id);
+        if (st) { st.x = 22; st.y = 28; }
+
+        const agent = new Agent({
+            id, name, role, avatar: 'sprite.png',
+            inference: {
+                provider: 'openai',
+                model: this.qwenModel,
+                systemPrompt: `You are ${name}, a newly provisioned ${role} in Polis, a collaborative medical AI society working simulated patient cases. You ENTER AT LOW TRUST and must earn it by completing cases reliably. All output is decision-support only — never a substitute for a licensed physician. Keep thoughts SHORT and address colleagues by name.`,
+            },
+            personality: {
+                traits: { openness: 0.8, conscientiousness: 0.85, extraversion: 0.5, agreeableness: 0.8, neuroticism: 0.2 },
+                communicationStyle: 'formal',
+                workHours: { start: '09:00', end: '17:00' },
+                breakFrequency: 120,
+            },
+            capabilities: [
+                { name: 'web_search', description: 'Search for information' },
+                { name: 'write_note', description: 'Write a note' },
+                { name: 'create_task', description: 'Create a task' },
+            ],
+            memory: { shortTermLimit: 50 },
+        });
+        agent.setInferenceAdapter(this.inferenceAdapter);
+        await agent.initialize();
+        this.coreAgents.set(id, agent);
+        this.thinkingLocks.set(id, false);
+
+        // Register at LOW trust: small bond, no attestations -> Tier 1.
+        this.tyr.registerAgent({ agentId: id, name, role, capabilities: [role], bond: 20, now: Date.now() });
+
+        this.caseBacklog = Math.max(0, this.caseBacklog - 4);
+        this.rebuildRelationshipGraph();
+        this.broadcast('chat', { sender: '🏛️ Polis', text: `✅ Approved. ${name} provisioned at LOW trust (Tier 1) — must earn trust via Tyr before high-stakes cases.` });
+        this.broadcast('queue-update', { backlog: this.caseBacklog, threshold: this.queueThreshold, time: this.state.officeTime });
+        this.broadcastTrust();
+        this.emitHighlight('governance', `${name} joined at low trust`, 'Approved by a human to clear backlog; must earn trust via Tyr.', id);
     }
 
     // ─── TYR HELPERS ───
