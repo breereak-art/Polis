@@ -9,6 +9,7 @@ import { HighlightsFeed } from './components/HighlightsFeed';
 import { AgentPulseBoard } from './components/AgentPulseBoard';
 import { RelationshipGraph } from './components/RelationshipGraph';
 import { EpisodeRecapPanel } from './components/EpisodeRecapPanel';
+import { TyrPanel } from './components/TyrPanel';
 
 export function App() {
     return (
@@ -17,6 +18,7 @@ export function App() {
                 <h1 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: 8 }}>🏛️ Polis · Medical District</h1>
                 <p style={{ margin: '4px 0 0', opacity: 0.6, fontSize: '11px' }}>A self-governing AI agent society · trust enforced by Tyr</p>
             </div>
+            <TyrPanel />
             <ChatPanel />
             <TaskBoard />
             <AgentInspector agent={{ name: 'Tara', role: 'Triage', status: 'Idle', currentTask: 'Awaiting patient case' }} />

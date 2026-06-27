@@ -226,6 +226,17 @@ export class OfficeRoom extends Room<OfficeState> {
             this.assignCase(title, agentId, true);
         });
 
+        // Phase 4: run an A/B comparison (trustless vs Tyr) and broadcast the gap.
+        this.onMessage('run-comparison', (client, message) => {
+            const count = Math.max(4, Math.min(50, Number(message?.count) || 12));
+            const result = this.runComparison(count);
+            this.broadcast('comparison-result', result);
+            this.broadcast('chat', {
+                sender: '🛡️ Tyr',
+                text: `A/B over ${count} cases — Trustless: ${result.trustless.passRate}% pass, avg ${result.trustless.avgScore}. Tyr: ${result.tyr.passRate}% pass, avg ${result.tyr.avgScore} (+${result.delta.passRate}% pass, +${result.delta.avgScore} score). Bypassed: ${result.routedAround.join(', ') || 'none'}.`,
+            });
+        });
+
         // Save office layout from editor
         this.onMessage('save-layout', async (client, message) => {
             const layoutName = message.name || 'default';
@@ -334,6 +345,44 @@ export class OfficeRoom extends Room<OfficeState> {
             }
         }
         this.broadcastTrust();
+    }
+
+    /** Outcome model: the unreliable defector mostly fails; others mostly pass. */
+    private simulateOutcome(agentId: string): { pass: boolean; score: number } {
+        const unreliable = this.unreliableAgents.has(agentId);
+        const pass = unreliable ? Math.random() < 0.25 : Math.random() < 0.9;
+        const score = pass ? 85 + Math.floor(Math.random() * 15) : 20 + Math.floor(Math.random() * 30);
+        return { pass, score };
+    }
+
+    /**
+     * Phase 4 A/B: run the same case load two ways and measure the gap.
+     * Trustless routes to everyone (incl. the defector); Tyr routes only to
+     * agents at/above the trust threshold (the defector is bypassed).
+     */
+    private runComparison(count = 12) {
+        const workers = this.workerIds();
+        const tyrPool = workers.filter((id) => (this.tyr.getTrust(id)?.trustTier ?? 0) >= this.trustThreshold);
+        const tally = (pool: string[]) => {
+            let pass = 0, sum = 0;
+            for (let i = 0; i < count; i++) {
+                const r = this.simulateOutcome(pool[i % pool.length]);
+                if (r.pass) pass++;
+                sum += r.score;
+            }
+            return { cases: count, passRate: Math.round((100 * pass) / count), avgScore: Math.round(sum / count) };
+        };
+        const pool = tyrPool.length ? tyrPool : workers;
+        const trustless = tally(workers);
+        const tyr = tally(pool);
+        return {
+            count,
+            trustless,
+            tyr,
+            delta: { passRate: tyr.passRate - trustless.passRate, avgScore: tyr.avgScore - trustless.avgScore },
+            routedAround: workers.filter((id) => !pool.includes(id)).map((id) => this.tyr.getTrust(id)?.name ?? id),
+            time: this.state.officeTime,
+        };
     }
 
     // ─── TYR HELPERS ───
