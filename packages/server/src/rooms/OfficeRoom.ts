@@ -513,6 +513,7 @@ export class OfficeRoom extends Room<OfficeState> {
             profiles: this.tyr.getAllProfiles(),
             integrity: this.tyr.verifyIntegrity(),
             chainLength: this.tyr.getChain().length,
+            chain: this.tyr.getChain(),
             slashes: this.tyr.getSlashEvents(),
         };
     }

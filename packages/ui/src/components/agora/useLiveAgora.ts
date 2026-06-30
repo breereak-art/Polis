@@ -33,6 +33,19 @@ const NAME_TO_ID: Record<string, string> = {
 interface Profile {
     agentId: string; name: string; role?: string;
     trustTier: number; bond: number; attestationCount: number; slashCount: number;
+    passCount?: number; failCount?: number; avgScore?: number; capabilities?: string[];
+}
+
+export interface LedgerEntry {
+    index: number; agentId: string; taskId: string; outcome: 'pass' | 'fail';
+    score: number; attester: string; timestamp: number; prevHash: string; hash: string;
+}
+export interface SlashRecord { agentId: string; amount: number; reason: string; timestamp: number; }
+
+export interface Kpis {
+    agents: number; trustIndex: number; openCases: number;
+    slashedBond: number; slashEvents: number; attestations: number;
+    passRate: number; avgBond: number;
 }
 
 interface Dyn {
@@ -53,6 +66,9 @@ interface Model {
     connectors: Connector[];
     backlog: number;
     integrity: { valid: boolean; length: number } | null;
+    chain: LedgerEntry[];
+    slashes: SlashRecord[];
+    trustSeries: number[];
     evCounter: number;
     conCounter: number;
 }
@@ -90,6 +106,11 @@ export interface LiveAgora {
     controls: SimControls;
     integrity: { valid: boolean; length: number } | null;
     backlog: number;
+    kpis: Kpis;
+    trustSeries: number[];
+    chain: LedgerEntry[];
+    slashes: SlashRecord[];
+    profiles: Profile[];
 }
 
 export function useLiveAgora(): LiveAgora {
@@ -98,6 +119,7 @@ export function useLiveAgora(): LiveAgora {
         modelRef.current = {
             order: [], profiles: new Map(), dyn: new Map(),
             events: [], connectors: [], backlog: 0, integrity: null,
+            chain: [], slashes: [], trustSeries: [],
             evCounter: 0, conCounter: 0,
         };
     }
@@ -177,23 +199,34 @@ export function useLiveAgora(): LiveAgora {
             force();
         };
 
-        // Cold-start seed: the initial trust-update is sent once on join and can be
-        // dropped before handlers attach, so pull the roster from REST and retry
-        // until the room is ready.
+        // Poll the REST snapshot as the authoritative source (roster, real
+        // hash-chain, slash records, integrity). This also avoids relying on the
+        // join-time trust-update, which can be dropped before handlers attach.
+        // The eventBus handlers above add the instant reactions (pulses, thoughts).
         let cancelled = false;
-        const seed = async (tries: number) => {
+        const trustIndexNow = (): number => {
+            const workers = [...model.profiles.values()].filter((p) => p.agentId !== 'tyr');
+            if (!workers.length) return 0;
+            return workers.reduce((s, p) => s + p.trustTier, 0) / workers.length / 5;
+        };
+        const poll = async () => {
             try {
                 const r = await fetch('/api/tyr');
                 const j = await r.json();
-                if (!cancelled && j?.profiles?.length) {
-                    applyProfiles(j.profiles, j.integrity, j.chainLength);
-                    force();
-                    return;
+                if (cancelled || !j?.ok) return;
+                applyProfiles(j.profiles || [], j.integrity, j.chainLength);
+                model.chain = (j.chain || []) as LedgerEntry[];
+                model.slashes = (j.slashes || []) as SlashRecord[];
+                const ti = trustIndexNow();
+                if (ti > 0) {
+                    model.trustSeries.push(ti);
+                    if (model.trustSeries.length > 60) model.trustSeries.shift();
                 }
+                force();
             } catch { /* server not up yet */ }
-            if (!cancelled && tries < 8) window.setTimeout(() => seed(tries + 1), 700);
         };
-        seed(0);
+        poll();
+        const pollTimer = window.setInterval(poll, 2500);
 
         const onSlash = (e: Event) => {
             const { agentId, amount, reason, time } = (e as CustomEvent).detail || {};
@@ -280,6 +313,7 @@ export function useLiveAgora(): LiveAgora {
             eventBus.removeEventListener('queue-update', onQueue);
             eventBus.removeEventListener('activity-log', onActivity);
             window.clearInterval(timer);
+            window.clearInterval(pollTimer);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -344,6 +378,21 @@ export function useLiveAgora(): LiveAgora {
         setPaused: (b: boolean) => { pausedRef.current = b; force(); },
     };
 
+    // ---- real KPIs derived from the live ledger ----
+    const workers = [...model.profiles.values()].filter((p) => p.agentId !== 'tyr');
+    const totalAtt = workers.reduce((s, p) => s + (p.attestationCount || 0), 0);
+    const totalPass = workers.reduce((s, p) => s + (p.passCount || 0), 0);
+    const kpis: Kpis = {
+        agents: workers.length,
+        trustIndex: workers.length ? workers.reduce((s, p) => s + p.trustTier, 0) / workers.length / 5 : 0,
+        openCases: model.backlog,
+        slashedBond: model.slashes.reduce((s, e) => s + (e.amount || 0), 0),
+        slashEvents: model.slashes.length,
+        attestations: model.integrity?.length ?? model.chain.length,
+        passRate: totalAtt ? totalPass / totalAtt : 0,
+        avgBond: workers.length ? Math.round(workers.reduce((s, p) => s + p.bond, 0) / workers.length) : 0,
+    };
+
     return {
         agents,
         events: model.events,
@@ -352,5 +401,10 @@ export function useLiveAgora(): LiveAgora {
         controls,
         integrity: model.integrity,
         backlog: model.backlog,
+        kpis,
+        trustSeries: model.trustSeries,
+        chain: model.chain,
+        slashes: model.slashes,
+        profiles: [...model.profiles.values()],
     };
 }
