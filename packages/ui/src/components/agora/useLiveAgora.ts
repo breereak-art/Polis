@@ -56,6 +56,12 @@ interface Dyn {
     lastAtt: number;           // last seen attestationCount, to detect new attestations
     log: { t: string; msg: string }[];
     decisions: Decision[];
+    x: number; y: number;      // current position (lerps toward target)
+    tx: number; ty: number;    // movement target
+    seatX: number; seatY: number; // home base in the agent's room (set during build)
+    wanderUntil: number;       // ms; pick a new wander target after this
+    thought?: string;          // latest live thought (Qwen)
+    thoughtUntil: number;      // ms; thought bubble expiry
 }
 
 interface Model {
@@ -140,6 +146,8 @@ export function useLiveAgora(): LiveAgora {
                     status: 'active', statusUntil: 0,
                     bobPhase: (idx * 0.17) % 1, facing: 1,
                     lastAtt: 0, log: [], decisions: [],
+                    x: NaN, y: NaN, tx: NaN, ty: NaN, seatX: NaN, seatY: NaN,
+                    wanderUntil: 0, thoughtUntil: 0,
                 };
                 model.dyn.set(id, d);
             }
@@ -284,6 +292,8 @@ export function useLiveAgora(): LiveAgora {
             if (thought) {
                 d.decisions.unshift({ tick: 0, intent: (action || 'think') as any, target: '', score: 0.5 + Math.random() * 0.4, reason: thought, chosen: true });
                 if (d.decisions.length > 6) d.decisions.pop();
+                d.thought = thought;
+                d.thoughtUntil = nowMs() + 5500;
             }
             d.log.unshift({ t: time || timeStr(), msg: thought ? thought : (action || 'active') });
             if (d.log.length > 8) d.log.pop();
@@ -303,6 +313,24 @@ export function useLiveAgora(): LiveAgora {
             for (const d of model.dyn.values()) {
                 if (d.status !== 'frozen' && d.status !== 'slashed') d.bobPhase = (d.bobPhase + 0.16) % 1;
                 if (d.status === 'flagged' && d.statusUntil && t > d.statusUntil) d.status = 'active';
+                if (d.thoughtUntil && t > d.thoughtUntil) { d.thought = undefined; d.thoughtUntil = 0; }
+
+                // movement: wander around the room seat; sit at the desk when working;
+                // slashed agents are seated in the holding cell (seat moves there) and
+                // glide across as they're marched off.
+                if (Number.isNaN(d.seatX)) continue;
+                if (Number.isNaN(d.x)) { d.x = d.seatX; d.y = d.seatY; d.tx = d.seatX; d.ty = d.seatY; }
+                if (d.status === 'working' || d.status === 'slashed') {
+                    d.tx = d.seatX; d.ty = d.seatY;
+                } else if (t > d.wanderUntil) {
+                    d.tx = d.seatX + (Math.random() - 0.5) * 26;
+                    d.ty = d.seatY + (Math.random() - 0.5) * 20;
+                    d.wanderUntil = t + 1500 + Math.random() * 2800;
+                }
+                const dx = d.tx - d.x, dy = d.ty - d.y;
+                if (Math.abs(dx) > 0.4) d.facing = dx >= 0 ? 1 : -1;
+                d.x += dx * 0.18;
+                d.y += dy * 0.18;
             }
             model.connectors = model.connectors.filter((c) => t - c.born < 900);
             force();
@@ -332,6 +360,7 @@ export function useLiveAgora(): LiveAgora {
         const slot = (roomSlot[room] = (roomSlot[room] ?? -1) + 1);
         const pos = posInRoom(room, slot);
         const d = model.dyn.get(id)!;
+        d.seatX = pos.x; d.seatY = pos.y; // home base for the movement ticker
         const tierNorm = clamp01(prof.trustTier / 5);
         agents.push({
             id,
@@ -343,10 +372,11 @@ export function useLiveAgora(): LiveAgora {
             room,
             target: room,
             path: [],
-            x: pos.x,
-            y: pos.y,
+            x: Number.isNaN(d.x) ? pos.x : d.x,
+            y: Number.isNaN(d.y) ? pos.y : d.y,
             facing: d.facing,
             bobPhase: d.bobPhase,
+            thought: d.thoughtUntil > nowMs() ? d.thought : undefined,
             cooldown: 0,
             sub: {
                 attestation: clamp01(tierNorm * 0.9 + 0.1 - prof.slashCount * 0.15),

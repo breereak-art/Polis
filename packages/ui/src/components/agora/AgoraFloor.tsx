@@ -476,6 +476,14 @@ export function AgoraFloor({
                       carrying={a.carrying ? { severity: a.carrying.severity } : null}
                       desaturate={a.status === "frozen" || a.status === "slashed"}
                     />
+                    {a.thought && showLabels && (
+                      <g transform="translate(0,-22)" style={{ pointerEvents: "none" }}>
+                        <rect x={-34} y={-7} width={68} height={9} rx={2} fill="var(--panel)" stroke="var(--border-strong)" strokeWidth="0.3" opacity={0.96} />
+                        <text x={-31} y={-0.6} fontFamily="JetBrains Mono, monospace" fontSize={3} fill="var(--foreground)">
+                          {a.thought.length > 40 ? a.thought.slice(0, 39) + "…" : a.thought}
+                        </text>
+                      </g>
+                    )}
                     {showLabels && (isSel || a.status === "slashed" || a.status === "frozen" || a.status === "flagged") && (
                       <text x={6} y={-18} fontFamily="JetBrains Mono, monospace" fontSize="3.2" fill="var(--foreground)">
                         {a.id}

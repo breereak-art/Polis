@@ -103,6 +103,8 @@ export interface Agent {
   carrying?: { kind: "case"; caseId: string; severity: CaseSeverity };
   /** current intent label */
   intent?: IntentKind;
+  /** latest live thought (real Qwen reasoning), shown as a floor bubble */
+  thought?: string;
   /** last 4 scored decisions (most recent first) */
   decisions: Decision[];
   /** recent actions */
