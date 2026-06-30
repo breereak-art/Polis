@@ -39,7 +39,7 @@ const DEFAULT_CAM: Cam = { x: 153, y: 132, z: 2.2 };
 function clampZoom(z: number) { return Math.max(0.35, Math.min(4.5, z)); }
 
 export function AgoraFloor({
-  agents, events, cases, connectors, controls, selectedId, onSelect,
+  agents, events, cases, connectors, controls, selectedId, onSelect, onIssueOrder,
 }: {
   agents: Agent[];
   events: FloorEvent[];
@@ -48,6 +48,7 @@ export function AgoraFloor({
   controls: SimControls;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  onIssueOrder?: (agentId: string) => void;
 }) {
   const [pulses, setPulses] = useState<Pulse[]>([]);
   const seenRef = useRef<Set<string>>(new Set());
@@ -547,7 +548,7 @@ export function AgoraFloor({
         <div className="border-b border-border bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           Agent inspector
         </div>
-        {selected ? <InspectorBody selected={selected} onClose={() => onSelect(null)} /> : <EmptyInspector agents={agents} />}
+        {selected ? <InspectorBody selected={selected} onClose={() => onSelect(null)} onIssueOrder={onIssueOrder} /> : <EmptyInspector agents={agents} />}
       </aside>
 
       <style>{`
@@ -827,7 +828,7 @@ function Minimap({ agents, cam, onPan }: { agents: Agent[]; cam: Cam; onPan: (wx
 }
 
 /* ---------------- Inspector ---------------- */
-function InspectorBody({ selected, onClose }: { selected: Agent; onClose: () => void }) {
+function InspectorBody({ selected, onClose, onIssueOrder }: { selected: Agent; onClose: () => void; onIssueOrder?: (agentId: string) => void }) {
   const room = ROOMS.find((r) => r.id === selected.room);
   const district = room ? DISTRICT_BY_ID[room.districtId] : null;
   return (
@@ -904,8 +905,10 @@ function InspectorBody({ selected, onClose }: { selected: Agent; onClose: () => 
       </div>
 
       <div className="mt-3 flex gap-2">
-        <button className="flex-1 rounded-sm border border-border-strong bg-foreground px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-background hover:bg-foreground/90">Issue order</button>
-        <button className="flex-1 rounded-sm border border-border bg-panel px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-foreground hover:bg-surface-2">Open dossier</button>
+        <button
+          onClick={() => onIssueOrder?.(selected.id)}
+          className="flex-1 rounded-sm border border-border-strong bg-foreground px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-background hover:bg-foreground/90"
+        >Issue order</button>
         <button onClick={onClose} className="rounded-sm border border-border bg-panel px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:bg-surface-2">✕</button>
       </div>
     </div>

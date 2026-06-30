@@ -69,6 +69,7 @@ interface Model {
     chain: LedgerEntry[];
     slashes: SlashRecord[];
     trustSeries: number[];
+    roomOverride: Map<string, string>; // agentId → room (e.g. slashed → holding cell)
     evCounter: number;
     conCounter: number;
 }
@@ -119,7 +120,7 @@ export function useLiveAgora(): LiveAgora {
         modelRef.current = {
             order: [], profiles: new Map(), dyn: new Map(),
             events: [], connectors: [], backlog: 0, integrity: null,
-            chain: [], slashes: [], trustSeries: [],
+            chain: [], slashes: [], trustSeries: [], roomOverride: new Map(),
             evCounter: 0, conCounter: 0,
         };
     }
@@ -145,13 +146,14 @@ export function useLiveAgora(): LiveAgora {
             return d;
         };
 
+        const roomFor = (id: string): string =>
+            model.roomOverride.get(id) || placementFor(id, Math.max(0, model.order.indexOf(id))).room;
+
         const agentPos = (id: string): { x: number; y: number } => {
-            const idx = model.order.indexOf(id);
-            const place = placementFor(id, idx < 0 ? 0 : idx);
-            // slot = order of this agent within its room
-            const sameRoom = model.order.filter((o) => placementFor(o, model.order.indexOf(o)).room === place.room);
+            const room = roomFor(id);
+            const sameRoom = model.order.filter((o) => roomFor(o) === room);
             const slot = Math.max(0, sameRoom.indexOf(id));
-            return posInRoom(place.room, slot);
+            return posInRoom(room, slot);
         };
 
         const emit = (ev: Omit<FloorEvent, 'id' | 'tick' | 'ts' | 'hash'> & { ts?: string }) => {
@@ -234,6 +236,7 @@ export function useLiveAgora(): LiveAgora {
             const d = ensureDyn(agentId, model.order.indexOf(agentId));
             d.status = 'slashed';
             d.statusUntil = 0;
+            model.roomOverride.set(agentId, 'holding'); // marched to the enforcement holding cells
             const prof = model.profiles.get(agentId);
             const pos = agentPos(agentId);
             emit({
@@ -325,8 +328,9 @@ export function useLiveAgora(): LiveAgora {
         const prof = model.profiles.get(id);
         if (!prof) return;
         const place = placementFor(id, idx);
-        const slot = (roomSlot[place.room] = (roomSlot[place.room] ?? -1) + 1);
-        const pos = posInRoom(place.room, slot);
+        const room = model.roomOverride.get(id) || place.room;
+        const slot = (roomSlot[room] = (roomSlot[room] ?? -1) + 1);
+        const pos = posInRoom(room, slot);
         const d = model.dyn.get(id)!;
         const tierNorm = clamp01(prof.trustTier / 5);
         agents.push({
@@ -336,8 +340,8 @@ export function useLiveAgora(): LiveAgora {
             trust: tierNorm,
             stake: prof.bond,
             status: d.status,
-            room: place.room,
-            target: place.room,
+            room,
+            target: room,
             path: [],
             x: pos.x,
             y: pos.y,

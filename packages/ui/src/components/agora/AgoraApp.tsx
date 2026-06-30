@@ -87,6 +87,15 @@ export function AgoraApp() {
     const surge = () => send('queue-cases', { n: 6 });
     const approve = () => { send('approve-resource', {}); setRequest(null); };
     const deny = () => { send('deny-resource', {}); setRequest(null); };
+    // Inspector "Issue order" → force this agent onto a live case (probation,
+    // overriding the trust gate). If they fail verification, Tyr slashes them and
+    // they're marched to the holding cells — the full enforcement loop, live.
+    const issueOrder = (agentId: string) => {
+        const p = live.profiles.find((x) => x.agentId === agentId);
+        send('run-case', { agentId, title: `Order · ${p?.name ?? agentId} (probation)` });
+    };
+    // Dev-only console helper for driving the live backend during verification.
+    if (import.meta.env.DEV && typeof window !== 'undefined') (window as any).polisSend = send;
 
     const workers = useMemo(() => live.profiles.filter((p) => p.agentId !== 'tyr').sort((a, b) => b.trustTier - a.trustTier), [live.profiles]);
     const recentChain = useMemo(() => [...live.chain].slice(-12).reverse(), [live.chain]);
@@ -183,6 +192,7 @@ export function AgoraApp() {
                     controls={live.controls}
                     selectedId={selectedId}
                     onSelect={setSelectedId}
+                    onIssueOrder={issueOrder}
                 />
             </section>
 
