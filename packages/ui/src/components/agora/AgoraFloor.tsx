@@ -58,6 +58,8 @@ export function AgoraFloor({
   const dragRef = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [followSelected, setFollowSelected] = useState(true);
+  const movedRef = useRef(false);          // true once a pointer-drag actually moved
+  const flyRef = useRef<number | null>(null); // active camera fly-in interval id
 
   useEffect(() => {
     const seen = seenRef.current;
@@ -93,8 +95,13 @@ export function AgoraFloor({
     return { x: r.x, y: r.y };
   }, []);
 
+  const cancelFly = useCallback(() => {
+    if (flyRef.current) { window.clearInterval(flyRef.current); flyRef.current = null; }
+  }, []);
+
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
+    cancelFly();
     const p = svgPointFromClient(e.clientX, e.clientY);
     const cur = camRef.current;
     const newZ = clampZoom(cur.z * (1 - e.deltaY * 0.0014));
@@ -104,19 +111,22 @@ export function AgoraFloor({
     const nx = p.x - wx * newZ;
     const ny = p.y - wy * newZ;
     setCam({ x: nx, y: ny, z: newZ });
-  }, [svgPointFromClient]);
+  }, [svgPointFromClient, cancelFly]);
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if ((e.target as Element).closest?.("[data-agent-hit]")) return;
+    cancelFly();
+    movedRef.current = false;
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const p = svgPointFromClient(e.clientX, e.clientY);
     dragRef.current = { x: p.x, y: p.y, cx: camRef.current.x, cy: camRef.current.y };
     setDragging(true);
     setFollowSelected(false);
-  }, [svgPointFromClient]);
+  }, [svgPointFromClient, cancelFly]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragRef.current) return;
+    movedRef.current = true;
     const p = svgPointFromClient(e.clientX, e.clientY);
     setCam((c) => ({ ...c, x: dragRef.current!.cx + (p.x - dragRef.current!.x), y: dragRef.current!.cy + (p.y - dragRef.current!.y) }));
   }, [svgPointFromClient]);
@@ -155,6 +165,40 @@ export function AgoraFloor({
     const sy = VIEW_MIN_Y + VIEW_H / 2;
     setCam({ x: sx - iso.x * nz, y: sy - iso.y * nz - 8, z: nz });
   }, []);
+
+  // Smooth camera fly-in (used by the immersive room click).
+  const flyTo = useCallback((target: Cam) => {
+    setFollowSelected(false);
+    cancelFly();
+    flyRef.current = window.setInterval(() => {
+      setCam((c) => {
+        const nx = c.x + (target.x - c.x) * 0.2;
+        const ny = c.y + (target.y - c.y) * 0.2;
+        const nz = c.z + (target.z - c.z) * 0.2;
+        if (Math.abs(nx - target.x) < 0.4 && Math.abs(ny - target.y) < 0.4 && Math.abs(nz - target.z) < 0.004) {
+          cancelFly();
+          return target;
+        }
+        return { x: nx, y: ny, z: nz };
+      });
+    }, 16);
+  }, [cancelFly]);
+
+  // Click a room/building → fly in for an immersive close-up of that room.
+  const focusRoom = useCallback((room: Room) => {
+    const iso = toIso(room.x + room.w / 2, room.y + room.h / 2);
+    const z = clampZoom(3.4);
+    const sx = VIEW_MIN_X + VIEW_W / 2;
+    const sy = VIEW_MIN_Y + VIEW_H / 2;
+    flyTo({ x: sx - iso.x * z, y: sy - iso.y * z - 10, z });
+  }, [flyTo]);
+
+  const pickRoom = useCallback((room: Room) => {
+    if (movedRef.current) return; // a drag, not a click — ignore
+    focusRoom(room);
+  }, [focusRoom]);
+
+  useEffect(() => () => cancelFly(), [cancelFly]);
 
   // follow selected agent (gentle lerp)
   useEffect(() => {
@@ -317,6 +361,7 @@ export function AgoraFloor({
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
+            onDoubleClick={() => flyTo(DEFAULT_CAM)}
           >
             <defs>
               <pattern id="isoTile" patternUnits="userSpaceOnUse" width="34.64" height="16">
@@ -350,7 +395,7 @@ export function AgoraFloor({
 
               {/* rooms (buildings) */}
               {ROOMS.map((r) => (
-                <RoomBuilding key={r.id} room={r} heat={heat[r.id] ?? 0} showDetail={showDetail} />
+                <RoomBuilding key={r.id} room={r} heat={heat[r.id] ?? 0} showDetail={showDetail} onPick={pickRoom} />
               ))}
 
               {/* houses */}
@@ -549,14 +594,14 @@ function DistrictPlate({ d }: { d: District }) {
 }
 
 /* ---------------- Room building (interior) ---------------- */
-function RoomBuilding({ room, heat, showDetail }: { room: Room; heat: number; showDetail: boolean }) {
+function RoomBuilding({ room, heat, showDetail, onPick }: { room: Room; heat: number; showDetail: boolean; onPick: (r: Room) => void }) {
   const back = toIso(room.x, room.y);
   const backRight = toIso(room.x + room.w, room.y);
   const backLeft = toIso(room.x, room.y + room.h);
   const WALL_H = 14;
   const heatOpacity = Math.min(0.22, heat * 0.04);
   return (
-    <g>
+    <g onClick={() => onPick(room)} style={{ cursor: "zoom-in" }}>
       <polygon points={rectIso(room.x, room.y, room.w, room.h)} fill="var(--panel)" stroke="var(--border-strong)" strokeWidth="0.8" />
       <polygon points={rectIso(room.x, room.y, room.w, room.h)} fill="url(#isoTile)" />
       {heat > 0 && <polygon points={rectIso(room.x, room.y, room.w, room.h)} fill="var(--destructive)" opacity={heatOpacity} />}
