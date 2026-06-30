@@ -4,11 +4,6 @@ import { TaskBoard } from './components/TaskBoard';
 import { AgentInspector } from './components/AgentInspector';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SystemLog } from './components/SystemLog';
-import { ViralControlPanel } from './components/ViralControlPanel';
-import { HighlightsFeed } from './components/HighlightsFeed';
-import { AgentPulseBoard } from './components/AgentPulseBoard';
-import { RelationshipGraph } from './components/RelationshipGraph';
-import { EpisodeRecapPanel } from './components/EpisodeRecapPanel';
 import { TyrPanel } from './components/TyrPanel';
 
 export function App() {
@@ -24,11 +19,6 @@ export function App() {
             <AgentInspector agent={{ name: 'Tara', role: 'Triage', status: 'Idle', currentTask: 'Awaiting patient case' }} />
             <LayoutEditor />
             <SystemLog />
-            <ViralControlPanel />
-            <RelationshipGraph />
-            <HighlightsFeed />
-            <AgentPulseBoard />
-            <EpisodeRecapPanel />
         </>
     );
 }

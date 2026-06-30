@@ -44,6 +44,7 @@ export class OfficeScene extends Phaser.Scene {
     private layoutEditMode = false;
     private layoutDragItemId: string | null = null;
     private gridSize = 40 * 16;
+    private minZoom = 2;
     private heldMoveKeys: Set<'left' | 'right' | 'up' | 'down'> = new Set();
 
     constructor() {
@@ -58,8 +59,8 @@ export class OfficeScene extends Phaser.Scene {
                 frameHeight: 32
             });
         }
-        // City backdrop — Kenney CC0 tiles composed into a top-down city block.
-        this.load.image('polis_city', '/assets/polis-city.png');
+        // Clinic floorplan backdrop (own art) — color-coded specialty rooms.
+        this.load.image('polis_clinic', '/assets/polis-clinic.png');
     }
 
     create() {
@@ -89,8 +90,8 @@ export class OfficeScene extends Phaser.Scene {
 
             // City backdrop drawn over the primitive floor/furniture (depth 5;
             // agents sit at depth 10). Falls back to primitives if missing.
-            if (this.textures.exists('polis_city')) {
-                this.add.image(0, 0, 'polis_city')
+            if (this.textures.exists('polis_clinic')) {
+                this.add.image(0, 0, 'polis_clinic')
                     .setOrigin(0, 0)
                     .setDepth(5)
                     .setDisplaySize(gridSize, gridSize);
@@ -419,10 +420,23 @@ export class OfficeScene extends Phaser.Scene {
             }
             g.strokePath();
 
-            this.cameras.main.setBackgroundColor('#16213e');
-            this.cameras.main.setZoom(2);
+            // Match the clinic floor tone so any margin reads as "more floor",
+            // not empty void — lets us use a comfortable zoom on big monitors
+            // instead of cranking it until sprites are huge.
+            this.cameras.main.setBackgroundColor('#e9eef2');
+            const coverZoom = (): number => {
+                const cover = Math.max(window.innerWidth / gridSize, window.innerHeight / gridSize);
+                return Phaser.Math.Clamp(cover, 1.6, 2.4); // readable sprite scale
+            };
+            this.minZoom = coverZoom();
+            this.cameras.main.setZoom(this.minZoom);
             this.cameras.main.centerOn(gridSize / 2, gridSize / 2);
             this.cameras.main.setBounds(0, 0, gridSize, gridSize);
+
+            this.scale.on('resize', () => {
+                this.minZoom = coverZoom();
+                if (this.cameras.main.zoom < this.minZoom) this.cameras.main.setZoom(this.minZoom);
+            });
             this.customLayoutLayer = this.add.container(0, 0);
             this.customLayoutLayer.setDepth(4);
 
@@ -462,7 +476,7 @@ export class OfficeScene extends Phaser.Scene {
                 this.layoutDragItemId = null;
             });
             this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
-                const nextZoom = Phaser.Math.Clamp(this.cameras.main.zoom - deltaY * 0.001, 1, 3);
+                const nextZoom = Phaser.Math.Clamp(this.cameras.main.zoom - deltaY * 0.001, this.minZoom, this.minZoom + 2);
                 this.cameras.main.setZoom(nextZoom);
             });
 
