@@ -25,7 +25,12 @@ function resolveWsEndpoint(): string {
     if (globalEndpoint && globalEndpoint.trim()) return globalEndpoint.trim();
     if (typeof window !== 'undefined') {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        return `${protocol}//${window.location.hostname}:3000`;
+        // Vite dev server (5173) → backend on :3000. In production the UI is
+        // served by the game server itself, so connect back to the same origin.
+        if (window.location.port === '5173') {
+            return `${protocol}//${window.location.hostname}:3000`;
+        }
+        return `${protocol}//${window.location.host}`;
     }
     return 'ws://localhost:3000';
 }

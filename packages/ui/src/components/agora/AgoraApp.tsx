@@ -94,8 +94,8 @@ export function AgoraApp() {
         const p = live.profiles.find((x) => x.agentId === agentId);
         send('run-case', { agentId, title: `Order · ${p?.name ?? agentId} (probation)` });
     };
-    // Dev-only console helper for driving the live backend during verification.
-    if (import.meta.env.DEV && typeof window !== 'undefined') (window as any).polisSend = send;
+    // Console helper for driving the live backend (demo/verification).
+    if (typeof window !== 'undefined') (window as any).polisSend = send;
 
     const workers = useMemo(() => live.profiles.filter((p) => p.agentId !== 'tyr').sort((a, b) => b.trustTier - a.trustTier), [live.profiles]);
     const recentChain = useMemo(() => [...live.chain].slice(-12).reverse(), [live.chain]);

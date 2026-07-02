@@ -1,0 +1,18 @@
+# Never bake secrets or junk into the image
+.env
+.env.*
+!.env.example
+.git
+.github
+node_modules
+packages/*/node_modules
+packages/*/dist
+data
+.ref
+.media
+.claude
+pixel-agents-repo
+tools/kenney_dl
+packages/ui/public/star-assets
+*.md
+!README.md

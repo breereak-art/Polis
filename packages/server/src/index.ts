@@ -59,6 +59,16 @@ app.get('/api/episode-recap', (req, res) => {
     res.json({ ok: true, recap: room.getEpisodeRecap() });
 });
 
+// Production: serve the built UI (packages/ui/dist) from this same server so a
+// single container exposes everything — REST, WebSocket and the console.
+const uiDist = path.resolve(__dirname, '..', '..', 'ui', 'dist');
+app.use(express.static(uiDist));
+app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.sendFile(path.join(uiDist, 'index.html'), (err) => {
+        if (err) res.status(404).send('UI not built — run: npm run build --workspace=@agent-office/ui');
+    });
+});
+
 // Create HTTP and Colyseus server
 const httpServer = createServer(app);
 const colyseusServer = new Server({
