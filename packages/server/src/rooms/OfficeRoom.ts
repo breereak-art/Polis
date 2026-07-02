@@ -31,8 +31,11 @@ export class OfficeRoom extends Room<OfficeState> {
     private demoTickCount = 0;
     private coreAgents: Map<string, Agent> = new Map();
     private thinkingLocks: Map<string, boolean> = new Map();
-    // Qwen Cloud via the OpenAI-compatible adapter (DashScope). The adapter
-    // appends "/v1/chat/completions", so the base URL ends at "/compatible-mode".
+    // ── Qwen Cloud (Alibaba Cloud Model Studio / DashScope) ────────────────
+    // All agent inference goes through the OpenAI-compatible endpoint:
+    //   https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    // The adapter appends "/v1/chat/completions", so QWEN_BASE_URL ends at
+    // "/compatible-mode".
     private readonly qwenModel = process.env.QWEN_MODEL || 'qwen-plus';
     private inferenceAdapter = new OpenAICompatibleAdapter(
         process.env.QWEN_BASE_URL || 'https://dashscope-intl.aliyuncs.com/compatible-mode',
